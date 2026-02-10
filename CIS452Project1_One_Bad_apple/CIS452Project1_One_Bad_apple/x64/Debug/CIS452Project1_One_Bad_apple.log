@@ -1,0 +1,5 @@
+﻿  CIS452Project1_One_Bad_apple.c
+C:\Users\ejeny\source\repos\CIS452Project1_One_Bad_apple\CIS452Project1_One_Bad_apple\CIS452Project1_One_Bad_apple.c(34,13): warning C4013: 'fork' undefined; assuming extern returning int
+C:\Users\ejeny\source\repos\CIS452Project1_One_Bad_apple\CIS452Project1_One_Bad_apple\CIS452Project1_One_Bad_apple.c(39,5): warning C4098: 'error': 'void' function returning a value
+CIS452Project1_One_Bad_apple.obj : error LNK2019: unresolved external symbol fork referenced in function create_processes
+C:\Users\ejeny\source\repos\CIS452Project1_One_Bad_apple\x64\Debug\CIS452Project1_One_Bad_apple.exe : fatal error LNK1120: 1 unresolved externals
