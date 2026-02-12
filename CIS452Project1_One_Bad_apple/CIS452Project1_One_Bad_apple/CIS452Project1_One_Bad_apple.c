@@ -1,6 +1,5 @@
 
 
-
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,8 +182,6 @@ int main() {
                 pid_t pid = waitpid(-1, &status, WNOHANG);
                 if (pid > 0) {
                     remaining--;
-                } else {
-                    usleep(100000);  // 0.1 second poll
                 }
             }
 
@@ -202,7 +199,6 @@ int main() {
                 }
             }
         }
-        // Loop continues to next iteration
     }
 
     if (children) free(children);
