@@ -1,213 +1,223 @@
-
-
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <errno.h>
+
 #include <sys/types.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <string.h>
+#include <stdlib.h>
 #include <signal.h>
-#include <time.h>
+#include <string.h>
 
-/********Function Prototypes********/
-void sigHandlerINT(int sigNum);
 
-/********Global variables********/
-volatile sig_atomic_t shutdown = 0;
-pid_t *children = NULL;
-int num_children = 0;
+typedef struct {
+    int to;
+    char text[128];
+} msg;
 
-struct Message {
-    int recipient;
-    char message[256];
-};
 
-void error() {
-    printf("Error\n");
+volatile sig_atomic_t quitting = 0;
+
+void on_sigint(int sig)
+{
+    (void)sig;
+    quitting = 1;
+}
+
+
+void error()
+{
+    printf("Error");
     exit(1);
 }
 
-int main() {
+
+int main()
+{
+    // for exit on ctrl+c
     struct sigaction sa;
-    sa.sa_handler = sigHandlerINT;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = on_sigint;
     sigemptyset(&sa.sa_mask);
+
+    // IMPORTANT: do not restart scanf/fgets on SIGINT
     sa.sa_flags = 0;
+
     sigaction(SIGINT, &sa, NULL);
 
-    printf("Welcome to *One Bad Apple*! Press CTRL+C at any time to stop.\n");
+    printf("Enter number of processes\n");
+    int k = 0;
 
-    while (!shutdown) {
-        printf("\nEnter number of recipients: ");
-        fflush(stdout);  // Ensure prompt displays immediately
-        
-        int k;
-        scanf("%d", &k);
-        int ch;
-        while ((ch = getchar()) != '\n' && ch != EOF);
-        
-        if (k <= 0 || k > 20) {
-            printf("Invalid number: %d\n", k);
-            continue;
-        }
-        num_children = k;
-        
-        children = realloc(children, sizeof(pid_t) * k);
-        if (!children) {
-            perror("malloc");
-            return 1;
-        }
+    pid_t pid = getpid();
 
-        int pipes[20][2];
-        bool is_child = false;
-        pid_t self_pid = 0;
+    int self_pid = 0; // used to create a name that both the parent and child know.
 
-        for (int i = 0; i < k; i++) {
-            if (pipe(pipes[i]) == -1) {
-                perror("pipe");
-                shutdown = 1;
-                goto cleanup;
-            }
-        }
+    if (scanf("%d", &k) != 1) error();
+
+    int p_list[k];
+
+    // creating pipes
+    int pipes[k][2];
+    for (int i = 0; i < k; i++) pipe(pipes[i]);
+
+    // creating processes
+    for (int i = 1; i < k; i++)
+    {
+        pid = fork();
 
 
-        int ready_pipes[20][2];
-        for (int i = 0; i < k; i++) {
-            if (pipe(ready_pipes[i]) == -1) {
-                perror("ready_pipe");
-                shutdown = 1;
-                goto cleanup;
-            }
-        }
-
-        for (int i = 0; i < k; i++) {
-            pid_t pid = fork();
-            if (pid == -1) {
-                perror("fork");
-                shutdown = 1;
-                goto cleanup;
-            } else if (pid == 0) {
-                is_child = true;
-                self_pid = i + 1;
-                break;
-            } else {
-                children[i] = pid;
-            }
-        }
-        
-        
-
-        if (shutdown) goto cleanup;
-
-        if (is_child) {
-            int in_fd = pipes[(self_pid - 2 + k) % k][0];
-            int out_fd = pipes[self_pid - 1][1];
-
-            // Close unused pipe ends
-            for (int j = 0; j < k; j++) {
-                if (j != (self_pid - 2 + k) % k) close(pipes[j][0]);
-                if (j != self_pid - 1) close(pipes[j][1]);
-            }
-
-            printf("Process %d ready (PID: %d)\n", self_pid, getpid());
-
-            write(ready_pipes[self_pid-1][1], "R", 1);  // Signal ready
-            close(ready_pipes[self_pid-1][1]);
-
-            struct Message msg;
-            while (!shutdown) {
-                ssize_t bytes = read(in_fd, &msg, sizeof(msg));
-                if (bytes <= 0) break;
-
-                printf("Apple at Process %d\n", self_pid);
-                
-                if (msg.recipient == self_pid) {
-                    printf("Process %d KEEPING the apple: %s\n", self_pid, msg.message);
-                    break;
-                } else {
-                    printf("Process %d passing apple to next...\n", self_pid);
-                    write(out_fd, &msg, sizeof(msg));
-                }
-            }
-            close(in_fd);
-            close(out_fd);
-            exit(0);
-        } else {
-
-            printf("Waiting for all %d processes to be ready...\n", k);
-        for (int i = 0; i < k; i++) {
-            char ready_sig;
-            read(ready_pipes[i][0], &ready_sig, 1);  // BLOCK until child signals
-            close(ready_pipes[i][0]);
-            close(ready_pipes[i][1]);
-            }
-            printf("All processes ready! Who should KEEP the apple (1-%d): ", k);
-            // Parent
-            int recipient;
-            //printf("Who should KEEP the apple (1-%d): ", k);
-            fflush(stdout);
-            scanf("%d", &recipient);
-            while ((ch = getchar()) != '\n' && ch != EOF);
-            
-            if (recipient < 1 || recipient > k) {
-                printf("Invalid keeper\n");
-                shutdown = 1;
-                goto cleanup;
-            }
-            
-            printf("Enter apple message: ");
-            fflush(stdout);
-            char message[256];
-            fgets(message, sizeof(message), stdin);
-            message[strcspn(message, "\n")] = '\0';
-
-            struct Message msg = {recipient, ""};
-            strncpy(msg.message, message, sizeof(msg.message) - 1);
-            msg.message[sizeof(msg.message) - 1] = '\0';
-
-            for (int i = 0; i < k; i++) {
-                close(pipes[i][0]);
-            }
-
-            printf("Starting apple at Process 1...\n");
-            write(pipes[0][1], &msg, sizeof(msg));
-            close(pipes[0][1]);
-
-            // Wait for ALL children to exit before continuing
-            int remaining = k;
-            while (remaining > 0 && !shutdown) {
-                int status;
-                pid_t pid = waitpid(-1, &status, WNOHANG);
-                if (pid > 0) {
-                    remaining--;
-                }
-            }
-
-            printf("Round complete! All children closed.\n");
-        }
-        
-    cleanup:
-        // Force cleanup of any remaining children
-        if (children) {
-            for (int i = 0; i < num_children; i++) {
-                if (children[i] > 0) {
-                    kill(children[i], SIGTERM);
-                    waitpid(children[i], NULL, 0);
-                    children[i] = 0;
-                }
-            }
+        if (pid == 0) {
+            printf("PROCESS %d SPAWNED. PID = %d\n", i, getpid());
+            self_pid = i;
+            break;
         }
     }
 
-    if (children) free(children);
-    printf("Program fully terminated.\n");
-    return 0;
-}
+    // sets up the pipes
+    // each process keeps only:
+    // in  = read end of previous pipe
+    // out = write end of own pipe
+    int in = pipes[(self_pid - 1 + k) % k][0];
+    int out = pipes[self_pid][1];
 
-void sigHandlerINT(int sigNum) {
-    shutdown = 1;
-    printf("\nStop entered. Shutting down...\n");
-    fflush(stdout);
+    for (int i = 0; i < k; i++) {
+        if (pipes[i][0] != in)  close(pipes[i][0]);
+        if (pipes[i][1] != out) close(pipes[i][1]);
+    }
+
+    int shutdown_to = -2;
+    int ready_to = -3;
+
+    // if child process, check for apple and recieve messages. If it isnt for it, is passes it along.
+    if (pid == 0) {
+        printf("\tPROCESS %d WAITING\n", self_pid);
+
+        int all_processes_inited = 0;
+
+        // process k (last process) tells process 1 (parent) it is ready
+        if (self_pid == k - 1 && all_processes_inited == 0) {
+            msg r;
+            r.to = ready_to;
+            strcpy(r.text, "ready");
+            write(out, &r, sizeof(r));
+            all_processes_inited = 1;
+        }
+
+        while (true) {
+
+            msg m;
+
+            int n = read(in, &m, sizeof(m));
+            if (n <= 0) {
+                // parent died or pipe closed
+                break;
+            }
+
+            if (m.to == shutdown_to) {
+                // forward shutdown so everyone sees it, then exit
+                write(out, &m, sizeof(m));
+                break;
+            }
+
+            if (m.to == self_pid) {
+                m.to = -1; // sets the header to recieved.
+                printf("PROCESS %d RECIEVED MESSAGE\n", self_pid);
+                printf("\tContents: %s\n", m.text);
+
+                write(out, &m, sizeof(m)); // send the ack back around the ring
+                continue;
+            }
+
+            write(out, &m, sizeof(m));
+
+        }
+
+        close(in);
+        close(out);
+        return 0;
+    }
+
+
+    // if parent process, send messages.
+    if (pid != 0) {
+
+        // wait for process k (last process) to send "ready"
+        while (true) {
+            msg start;
+            int n = read(in, &start, sizeof(start));
+            if (n <= 0) break;
+
+            if (start.to == ready_to) {
+                // consume it (do not forward) so it doesnt loop forever
+                break;
+            }
+
+            // keep ring moving if something else appears
+            write(out, &start, sizeof(start));
+        }
+
+        printf("Master process ready!\n");
+
+
+        while (true) {
+
+            if (quitting) break;
+
+            msg m;
+            printf("Processes: 1");
+            for (int i = 2; i <= k; i++) printf("->%d", i); // shows available recipients
+
+
+            printf("\nWho is the message for: ");
+            if (scanf("%d", &m.to) != 1) {
+                if (quitting) break;     // ctrl+c interrupted scanf
+                clearerr(stdin);          // clear EINTR/error state
+                break;
+            }
+            int ch;
+            while ((ch = getchar()) != '\n' && ch != EOF);
+
+            if (quitting) break;
+
+            printf("\nWhat is the message? (128 characters max): ");
+            if (fgets(m.text, sizeof(m.text), stdin) == NULL) {
+                if (quitting) break;     // ctrl+c interrupted fgets
+                clearerr(stdin);
+                break;
+            }
+            m.text[strcspn(m.text, "\n")] = '\0';
+
+            write(out, &m, sizeof(m));
+
+            msg back;
+            int n = read(in, &back, sizeof(back));
+            if (n <= 0) break;
+
+            if (back.to == -1)
+            {
+                printf("Message was delivered\n");
+            }
+            else {
+                printf("No one recieved the message.\n");
+            }
+        }
+
+        // send shutdown poison-pill once
+        msg s;
+        s.to = shutdown_to;
+        strcpy(s.text, "shutdown");
+        write(out, &s, sizeof(s));
+
+        // wait for children to exit
+        for (int i = 1; i < k; i++) wait(NULL);
+
+        close(in);
+        close(out);
+    }
+
+
+    return 0;
 }
